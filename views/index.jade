@@ -1,0 +1,9 @@
+h1= title
+
+h2
+  a(href="createtask") create new task
+
+ul
+  - each t in tasks
+      li
+        a(href="task/"+t._id) #{t.name}

@@ -1,0 +1,15 @@
+{
+    "name": "application-name"
+  , "version": "0.0.1"
+  , "private": true
+  , "dependencies": {
+      "express": "2.5.1"
+    , "jade": ">= 0.0.1"
+    , "canvas": ">= 0.0.1"
+    , "request": ">= 0.0.1"
+    , "node-schedule": ">=0.0.1"
+    , "mongoose": ">=2.3.11"
+    , "irc": ">=0.3.3"
+    , "underscore": ">=0.0.1"
+  }
+}
