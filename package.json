@@ -14,5 +14,8 @@
     , "underscore.string": ">=0.0.1"
     , "htmlparser": ">=0.0.1"
     , "jsdom": ">=0.0.1"
+    , "jsdom": ">=0.0.1"
+    , "imagemagick": ">=0.0.1"
+    , "date-utils": ">=0.0.1"
   }
 }

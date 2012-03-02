@@ -3,28 +3,56 @@
  * Module dependencies.
  */
 
-var express = require('express')
-  , routes = require('./routes')
-  , Canvas = require('canvas')
-  , mongoose = require('mongoose')
-  , schedule = require('node-schedule')
-  , ircc    = require('irc')
-  , un      = require('underscore')
-  , unstring = require('underscore.string')
-  , req     = require('request')
+var express    = require('express')
+  , routes     = require('./routes')
+  , Canvas     = require('canvas')
+  , mongoose   = require('mongoose')
+  , schedule   = require('node-schedule')
+  , ircc       = require('irc')
+  , un         = require('underscore')
+  , unstring   = require('underscore.string')
+  , req        = require('request')
   , htmlparser = require("htmlparser")
-  , jsdom = require('jsdom')
+  , jsdom      = require('jsdom')
+  , im         = require('imagemagick')
+  , fs         = require('fs')
+ 
+require('date-utils')
 //  , check  = require('./lib/check.js')
-/*
-var irc = new ircc.Client('ant.rgk.ricoh.co.jp', 'yan_test', {
-    channels: ['#test_yan']
+
+
+
+// irc_bot
+var channel = '#yan_test';
+var irc = new ircc.Client('ant.rgk.ricoh.co.jp', 'tl_bot', {
+    channels: [channel],
 });
-*/
+setTimeout(function(){ irc.say(channel, 'everybody hello'); }, 3000);
+irc.addListener('message', function (from, to, message) {
+    console.log('%s => %s: %s', from, to, message);
+
+    if ( to.match(/^[#&]/) ) {
+        // channel message
+        if ( message.match(/hello/i) ) {
+            irc.say(to, 'Hello there ' + from);
+        }
+        if ( message.match(/dance/) ) {
+            setTimeout(function () { irc.say(to, "\u0001ACTION dances: :D\\-<\u0001") }, 1000);
+            setTimeout(function () { irc.say(to, "\u0001ACTION dances: :D|-<\u0001")  }, 2000);
+            setTimeout(function () { irc.say(to, "\u0001ACTION dances: :D/-<\u0001")  }, 3000);
+            setTimeout(function () { irc.say(to, "\u0001ACTION dances: :D|-<\u0001")  }, 4000);
+        }
+    }
+    else {
+        // private message
+    }
+});
+// Configuration
+
 var app = module.exports = express.createServer();
 
 var mongoUri = 'http://127.0.0.1:27017/canvaspng';
 
-// Configuration
 
 app.configure(function(){
   app.set('views', __dirname + '/views');
@@ -62,11 +90,26 @@ var everydaySchema = new Schema({
                        , day:    String
 });
 Timeline = mongoose.model('Timeline', timelineschema);
-everyday = mongoose.model('Everyday', everydaySchema);
+Everyday = mongoose.model('Everyday', everydaySchema);
 
 // Routes
 
 app.get('/', routes.index);
+app.get('/task/today', function(req, res){
+  var date = Date.yesterday();
+  var today = date.getFullYear().toString() + ('00' + (date.getMonth()+1).toString()).slice(-2) + date.getDate().toString();
+  Timeline.find({date: {$all: [today]}}, function(err, d){
+    if ( d.length == 0 ) {
+      Timeline.find().sort('ms', -1).limit(1).run(function (err, d) {
+        var timeline = d[0];
+        res.redirect('/task/' + timeline._id);
+      });
+      return
+    }
+    var timeline = d[0];
+    res.redirect('/task/' + timeline._id);
+  });
+});
 app.get('/task/:id', routes.task);
 app.get('/createtask', routes.createtask);
 app.post('/newtask', function(req, res){
@@ -100,12 +143,17 @@ rule.minute = 25;
 
 
 
-//var j = schedule.scheduleJob(rule, function(){
+var j = schedule.scheduleJob(rule, function(){
   console.log('Today is recognized by Rebecca Black!');
 
   var date = new Date();
-  var today = date.getFullYear().toString() + ('00' + (date.getMonth()+1).toString()).slice(-2) + date.getDate().toString();
+  var today = date.getFullYear().toString() + ('00' + (date.getMonth()+1).toString()).slice(-2) + ('00' + (date.getDate()-1).toString()).slice(-2);
+console.log(today);
   Timeline.find({date: {$all: [today]}}, function(err, d){
+    if ( d.length == 0 ) {
+      irc.say(channel, 'today is nothing!');
+      return
+    }
     var timeline = d[0];
     var tracurl = "http://quanp.cps.ricoh.co.jp/trac/quanp-world/query?status=accepted&status=approved&status=assigned&status=closed&status=implemented&status=new&status=pending&status=reopened&status=verified&group=status&order=priority&col=id&col=summary&col=status&col=version&col=blocking&milestone=%23" + timeline.ms
 
@@ -129,18 +177,36 @@ rule.minute = 25;
                 }
               }
               console.log(result);
-              everyday.update({"day":today}, {"total":result.closed+result.other, "done":result.closed}, function(err, a){
-                if (err) {
-                  console.log(err);
+              var irc_report =   "total: " + (result.closed + result.other).toString()
+                               + "  non-closed: " + result.other.toString()
+                               + "   timeline picture today: http://133.139.82.232:3010/task/" + timeline._id;
+              irc.say(channel, irc_report);  
+              Everyday.update({"day":today}, {"total":result.closed+result.other, "done":result.closed}, function(err, a){
+                if ( a != 0 ) {
+                    write_canvas(timeline);
+                    //resize(timeline);
+                } else {
+                  var e = new Everyday();
+                  e.day = today;
+                  e.taskid = timeline._id;
+                  e.total = result.closed+result.other;
+                  e.done  = result.closed;
+                  e.save(function(){
+                    write_canvas(timeline);
+                    //resize(timeline);
+                  });
                 }
               });
       });
     });
+  });
+});
 
-    everyday.find({taskid: timeline._id}, function(err, e){
+var write_canvas = function(tl){
+    Everyday.find({taskid: tl._id}, function(err, e){
       var ary = un.sortBy(e, function(i){i.day});
-      var max = Number(timeline.max) + 10;
-      var days = timeline.date.toString().split(",").length;
+      var max = Number(tl.max) + 10;
+      var days = tl.date.toString().split(",").length;
       var horizontal = 400/max;
       var vertical = 600/days;
       var canvas = new Canvas(730, 500)
@@ -157,7 +223,7 @@ rule.minute = 25;
         ctx.strokeText(i*5, 35, 455-i*5*horizontal);
       }
       for(i=1;i<=days;i++){
-        ctx.strokeText(timeline.date.toString().split(",")[i-1].slice(-2), 45+vertical*(i-1), 465);
+        ctx.strokeText(tl.date.toString().split(",")[i-1].slice(-2), 45+vertical*(i-1), 465);
       }
 
       ctx.beginPath();
@@ -183,14 +249,77 @@ rule.minute = 25;
       });
       ctx.stroke();
   
-      var fs = require('fs')
-      var out = fs.createWriteStream(__dirname + '/public/images/' + timeline.ms + 'test.png')
+      var out = fs.createWriteStream(__dirname + '/public/images/' + tl.ms + 'test.png')
       var stream = canvas.createPNGStream();
   
       stream.on('data', function(chunk){
         out.write(chunk);
       });
+      stream.on('end', function(){ out.end(); });
+      out.on('error', function(){ console.log("error") });
+      out.on('close', function(){ resize(tl); });
     });
-//  })
-// irc.say('#channel', 'timeline');
-});
+}
+/*
+var resize = function(tl){
+    im.convert.path = '/usr/bin/convert';
+    im.identify.path = '/usr/bin/identify';
+    im.resize({
+               srcData: fs.readFileSync('public/images/' + tl.ms + 'test.png', 'binary'),
+               srcFormat: 'png',
+               format: 'png',
+               width  : 128,
+               filter : 'box',
+               timeout: 1200
+              }, function(err, stdout, stderr){
+               if (err) throw err;
+               fs.writeFileSync('public/images/today_small.png', stdout, 'binary');
+              });
+}
+*/
+//  there is no binary?
+var resize = function(tl){
+    im.convert.path = '/usr/bin/convert';
+    im.identify.path = '/usr/bin/identify';
+    im.resize({
+                srcPath: __dirname + '/public/images/' + tl.ms + 'test.png',
+                dstPath: __dirname + '/public/images/today_small.png',
+                srcFormat: 'png',
+                format: 'png',
+                filter: 'box',
+                timeout: 1200,
+                width  : 128
+              }, function(err, stdout, stderr){
+                if (err) throw err;
+                console.log('resized');
+              }
+    );
+}
+
+/* img.onload
+var resize = function(tl){
+    var Image = Canvas.Image;
+    var fs = require('fs');
+    
+    var img = new Image;
+
+    img.src = __dirname + '/public/images/131test.png';
+    img.onerror = function(err){
+      throw err;
+    }
+
+    img.onload = function(){
+console.log("imageloaded");
+      var width = img.width / 6
+        , height = img.height / 6
+        , canvas = new Canvas(width, height)
+        , ctx = canvas.getContext('2d')
+      ctx.drawImage(img, 0, 0, width, heigth);
+      canvas.toBuffer(function(err, buf){
+        fs.writeFile(__dirname + '/public/images/' + tl.ms + 'small.png', buf, function(){
+          console.log('Resized and saved');
+        });
+      });
+    }
+}
+*/
